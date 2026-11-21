@@ -45,6 +45,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/u
 import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { StorageLimitNotice } from "../../billing/storage-limit-notice";
+import { useDocCollab } from "../../docs/components/use-doc-collab";
 import { ContentEditor, ReadonlyContent, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, PreviewSequenceProvider, collectPreviewSequence, ImageThumbnailsProvider } from "../../editor";
 import {
   WAKEUP_ACTIVITY_ACTIONS,
@@ -3011,6 +3012,36 @@ export function IssueDetail({ issueId, onDelete, onArchive, onUnsubscribeArchive
     setDescPendingAttachments([]);
   }, [id]);
 
+  // With live editing on, the description is a shared document that the
+  // collaboration service saves. The solo editor still shows first, so the
+  // page never waits on that answer and works as before when live editing is
+  // off; the live editor takes over once it is ready, though not while
+  // someone is in the solo one. Unmounting the solo editor flushes its
+  // pending save, which the server merges into the live document.
+  const descCollab = useDocCollab(id, issue?.description ?? "", "issue", !guest);
+  const descLive = descCollab.mode === "live" ? descCollab : null;
+  const [descLiveReadyFor, setDescLiveReadyFor] = useState<number | null>(null);
+  const [descSoloHeld, setDescSoloHeld] = useState(false);
+  useEffect(() => setDescSoloHeld(false), [id]);
+  const showLiveDesc = !!descLive?.ready && descLiveReadyFor === descLive.generation && !descSoloHeld;
+  const descCarried = descCollab.mode === "solo" ? (descCollab.carried ?? null) : null;
+  const queueDescriptionSaveRef = useRef<
+    ((draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] }) => void) | null
+  >(null);
+  useEffect(() => {
+    // Typed into a live session that never connected: save it as a solo edit.
+    if (descCarried === null) return;
+    queueDescriptionSaveRef.current?.({
+      markdown: descCarried,
+      baseMarkdown: issue?.description ?? "",
+      attachmentIds: descPendingAttachmentsRef.current
+        .filter((a) => contentReferencesAttachment(descCarried, a))
+        .map((a) => a.id),
+    });
+    // Once per carried draft; the issue is read as it is then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [descCarried]);
+
   // Shared issue actions (mutations, pin, copy-link, modal dispatch, etc.).
   // Called before the `if (!issue)` early return so hook order stays stable.
   const actions = useIssueActions(issue);
@@ -3259,6 +3290,7 @@ export function IssueDetail({ issueId, onDelete, onArchive, onUnsubscribeArchive
     }
     persistDescriptionSave(draft);
   };
+  queueDescriptionSaveRef.current = queueDescriptionSave;
 
   const canAddProperty = OPTIONAL_PROP_KEYS.some(
     (key) => !visibleOptionalProps.has(key) && (key !== "stage" || issue.parent_issue_id != null),
@@ -4141,10 +4173,12 @@ export function IssueDetail({ issueId, onDelete, onArchive, onUnsubscribeArchive
               if (!descriptionEditingRef.current) {
                 descriptionEditingRef.current = true;
               }
+              if (descLive && !showLiveDesc) setDescSoloHeld(true);
             }}
             onBlurCapture={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) {
                 descriptionEditingRef.current = false;
+                setDescSoloHeld(false);
               }
             }}
           >
@@ -4153,6 +4187,23 @@ export function IssueDetail({ issueId, onDelete, onArchive, onUnsubscribeArchive
               {guest ? (
                 <ReadonlyContent content={issue.description ?? ""} attachments={descEditorAttachments} />
               ) : (
+              <>
+              {descLive?.ready && (
+                <div hidden={!showLiveDesc}>
+                  <ContentEditor
+                    ref={showLiveDesc ? descEditorRef : undefined}
+                    key={`${id}:${descLive.generation}`}
+                    collaboration={descLive.collaboration}
+                    onReady={() => setDescLiveReadyFor(descLive.generation)}
+                    placeholder={t(($) => $.detail.desc_placeholder)}
+                    onUploadFile={handleDescriptionUpload}
+                    currentIssueId={id}
+                    selectionAction={descriptionSelectionAction}
+                    attachments={descEditorAttachments}
+                  />
+                </div>
+              )}
+              {!showLiveDesc && (
               <ContentEditor
                 ref={descEditorRef}
                 key={id}
@@ -4195,6 +4246,8 @@ export function IssueDetail({ issueId, onDelete, onArchive, onUnsubscribeArchive
                 selectionAction={descriptionSelectionAction}
                 attachments={descEditorAttachments}
               />
+              )}
+              </>
               )}
             </div>
             {descStorageRefusal && (
