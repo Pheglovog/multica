@@ -24,6 +24,7 @@ import { useRecentContextStore } from "@multica/core/chat";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { BreakdownFilter } from "./project-progress-section";
 import { ProjectInsights } from "./project-insights";
+import { ProjectPropertiesPanel } from "./project-properties";
 import { ProjectActivityPage } from "./project-activity";
 import { getIssueSurfaceViewStore } from "@multica/core/issues/stores";
 import { issueScopeKey } from "@multica/core/issues/surface/scope";
@@ -314,14 +315,22 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const archived = !!project.archived_at;
 
   const sidebarContent = (
-    <ProjectInsights
-      project={project}
-      onFilter={showFilteredIssues}
-      onShowActivity={() => {
-        setMobileSidebarOpen(false);
-        handleTabChange("activity");
-      }}
-    />
+    <div className="space-y-5">
+      <ProjectPropertiesPanel
+        project={project}
+        onUpdate={handleUpdateField}
+        onStatusChange={handleStatusChange}
+        onOpenWorkflow={openWorkflowSheet}
+      />
+      <ProjectInsights
+        project={project}
+        onFilter={showFilteredIssues}
+        onShowActivity={() => {
+          setMobileSidebarOpen(false);
+          handleTabChange("activity");
+        }}
+      />
+    </div>
   );
 
   const projectMenu = (
@@ -454,12 +463,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 </div>
               )}
               {tab === "overview" ? (
-                <ProjectOverviewBody
-                  project={project}
-                  onUpdate={handleUpdateField}
-                  onStatusChange={handleStatusChange}
-                  onOpenWorkflow={openWorkflowSheet}
-                />
+                <ProjectOverviewBody project={project} onUpdate={handleUpdateField} />
               ) : (
                 <ProjectActivityPage projectId={project.id} />
               )}
